@@ -1,0 +1,194 @@
+#include <SoftwareSerial.h>
+#include<LiquidCrystal.h>
+#include<Servo.h>
+SoftwareSerial espSerial = SoftwareSerial(2,3);
+SoftwareSerial BLT= SoftwareSerial(4,5);
+Servo mservo;
+LiquidCrystal lcd(7,6,8,9,10,11);//pin no. 4,6,11,12,13,14
+float sensor=A0;
+int gas_value;
+int servopos;
+String bufarr;
+String apiKey = "AEYIH038VXYIDVAJ"; // replace with thingspeak WRITE API key
+String ssid="D-Link"; // Wifi network SSID
+String password ="Atpostshirki"; // Wifi network password
+boolean DEBUG=true;
+boolean leak=false;
+boolean servo=false;
+boolean blttrigger=false;
+#define VOLTAGE_MAX 5.0
+#define VOLTAGE_MAXCOUNTS 1023.0
+//============================================= showResponse
+void showResponse(int waitTime){
+long t=millis();
+char c;
+while (t+waitTime>millis()){
+if (espSerial.available()){
+c=espSerial.read();
+if (DEBUG) Serial.print(c);
+}
+}
+}
+//===========connection to thinkspeak.com==========================================
+boolean thingSpeakWrite(float value1){
+String cmd = "AT+CIPSTART=\"TCP\","; // TCP connection
+cmd += "\"api.thingspeak.com\","; // api.thingspeak.com
+cmd += 80;
+espSerial.println(cmd);
+if (DEBUG) Serial.println(cmd);
+if(espSerial.find("Error")){
+if (DEBUG) Serial.println("AT+CIPSTART error");
+return false;
+}
+String getStr = "GET /update?api_key="; // prepare GET string
+getStr += apiKey;
+getStr +="&field1=";
+getStr += String(value1);
+if(leak && gas_value<600){
+ getStr +="&field2=1";
+ leak=false;
+}
+if(servo){
+ getStr +="&field3=1";
+ servo=false;
+}
+if(blttrigger){
+ getStr +="&field4=1";
+ blttrigger=false;
+}
+getStr += "\r\n";
+// send data length
+cmd = "AT+CIPSEND=";
+cmd += String(getStr.length());
+espSerial.println(cmd);
+if (DEBUG) Serial.println(cmd);
+delay(0);
+if(espSerial.find(">")){
+espSerial.print(getStr);
+if (DEBUG) Serial.print(getStr);
+}
+else{
+espSerial.println("AT+CIPCLOSE");
+// alert user
+if (DEBUG) Serial.println("AT+CIPCLOSE");
+return false;
+}
+return true;
+}
+//====================Bluetooth code
+void blthd(){
+ BLT.print("AT+INQ\r\n");
+ delay(3000);
+ bufarr=BLT.readString();
+ if(bufarr.indexOf('OK')>4) blttrigger=true;
+}
+//===================================servo=======================================
+void servo1(){
+ servopos=mservo.read();
+ lcd.clear();
+ lcd.setCursor(0,0);
+ if(servopos==180){
+ lcd.print("Valve is");
+ lcd.setCursor(0,1);
+ lcd.print("already off");
+ }
+ else{
+ mservo.write(180);
+ lcd.print("Valve has been");
+ lcd.setCursor(0,1);
+ lcd.print("turned off");
+ servo=true;
+ }
+ 
+}
+//===================================================== setup
+void setup() { 
+DEBUG=true; // enable debug serial
+//----------my sensor code-----------
+pinMode(LED_BUILTIN, OUTPUT);
+pinMode(sensor,INPUT);
+mservo.attach(12);
+mservo.write(0);
+Serial.begin(9600); 
+lcd.begin(16,2);
+BLT.begin(38400);
+espSerial.begin(9600); // enable software serial
+ 
+BLT.print("AT+ROLE=1");
+espSerial.println("AT+CWMODE=1"); // set esp8266 as client
+showResponse(1000);
+espSerial.println("AT+CWJAP=\""+ssid+"\",\""+password+"\""); // set your home router SSID and 
+password
+showResponse(5000);
+if (DEBUG) {
+ Serial.println("Setup completed");
+ 
+ espSerial.print("AT+PING=<api.thingspeak.com>");
+bufarr=espSerial.readString();
+if(bufarr.indexOf('OK')>=0){
+ lcd.clear();
+ lcd.print("Wi-Fi connected");
+}
+else lcd.print("connection error");
+delay(1000);
+lcd.clear();
+lcd.print("Gas sensor");
+lcd.setCursor(0,1);
+lcd.print("warming up");
+delay(1000);
+lcd.print(".");
+delay(1000);
+lcd.print(".");
+delay(1000);
+lcd.print(".");
+delay(1000);
+lcd.print(".");
+delay(1000);
+}
+1. }
+// ======================================================================= loop
+void loop()
+{
+gas_value=analogRead(sensor);
+Serial.println(gas_value);
+lcd.clear();
+lcd.setCursor(0,0);
+lcd.print(gas_value);
+float t = gas_value*(VOLTAGE_MAX / VOLTAGE_MAXCOUNTS); //convert gas value to voltages
+if (isnan(t)) {
+ if (DEBUG) Serial.println("Failed to read from MQ5");
+}
+else{
+ if (DEBUG){
+ 
+ Serial.println("Voltage="+String(t));
+ lcd.setCursor(0,1);
+ lcd.print("voltage="+String(t));
+ }
+thingSpeakWrite(t); // Write values to thingspeak
+}
+if(gas_value>600){
+ 
+ digitalWrite(LED_BUILTIN,HIGH);
+ delay(200);
+ digitalWrite(LED_BUILTIN, LOW);
+ delay(200);
+ digitalWrite(LED_BUILTIN,HIGH);
+ delay(200);
+ digitalWrite(LED_BUILTIN, LOW);
+ delay(200);
+ digitalWrite(LED_BUILTIN,HIGH);
+ delay(200);
+ digitalWrite(LED_BUILTIN, LOW);
+ lcd.clear();
+ lcd.setCursor(0,0);
+ lcd.print("LEAK DETECTED");
+ delay(3000);
+ servo1();
+ blthd();
+ leak=true;
+}
+else delay(6000);
+ digitalWrite(LED_BUILTIN, LOW);
+delay(10000);
+}
